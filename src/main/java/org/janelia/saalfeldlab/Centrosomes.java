@@ -37,6 +37,9 @@ import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealLocalizable;
 import net.imglib2.RealPoint;
+import net.imglib2.cache.img.CachedCellImg;
+import net.imglib2.img.cell.CellCursor;
+import net.imglib2.img.cell.CellImg;
 import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.realtransform.AffineGet;
@@ -178,6 +181,31 @@ public class Centrosomes {
 		return false;
 	}
 
+	private static void fillMicrotubule(
+			final RandomAccessibleInterval<UnsignedLongType> src,
+			final RealPoint a,
+			final RealPoint b,
+			final double outerRadius,
+			final double[] offset,
+			final double[] resolution,
+			final long fg) {
+
+		final IntervalView<UnsignedLongType> box = Views.interval(src, boundingBox(a, b, outerRadius, offset, resolution, src));
+		final RealPoint p = new RealPoint(src.numDimensions());
+		final RealPoint c = new RealPoint(src.numDimensions());
+		final RealPoint d = new RealPoint(src.numDimensions());
+		final double sor = outerRadius * outerRadius;
+		final Cursor<UnsignedLongType> cursor = box.cursor();
+		while (cursor.hasNext()) {
+			cursor.fwd();
+			for (int i = 0; i < src.numDimensions(); ++i)
+				p.setPosition(cursor.getDoublePosition(i) * resolution[i] + offset[i], i);
+			if (inCylinder(p, a, b, c, d, sor))
+			if (true)
+				cursor.get().set(fg);
+		}
+	}
+
 	private static void paintMicrotubule(
 			final RandomAccessibleInterval<UnsignedLongType> src,
 			final RealPoint a,
@@ -223,6 +251,15 @@ public class Centrosomes {
 		}
 	}
 
+	private static void reverse(final int[] a) {
+
+		for (int i = a.length / 2, j = a.length - 1 - i; i >= 0; --i, ++j) {
+			final int ai = a[i];
+			a[i] = a[j];
+			a[j] = ai;
+		}
+	}
+
 	private static void paintMicrotubule(
 			final Annotation a,
 			final RandomAccessibleInterval<UnsignedLongType> centrosomesVolume,
@@ -234,6 +271,30 @@ public class Centrosomes {
 		final RealPoint posB = b.getPosition();
 
 		paintMicrotubule(centrosomesVolume, posA, posB, 21, 18, fLabelsOffset, labelsResolution, 255, 0);
+
+		System.out.println(String.format(
+				"%s -> %s: (%f, %f, %f) -> (%f, %f, %f)",
+				b.getComment(),
+				a.getComment(),
+				posB.getDoublePosition(0),
+				posB.getDoublePosition(1),
+				posB.getDoublePosition(2),
+				posA.getDoublePosition(0),
+				posA.getDoublePosition(1),
+				posA.getDoublePosition(2)));
+	}
+
+	private static void fillMicrotubule(
+			final Annotation a,
+			final RandomAccessibleInterval<UnsignedLongType> centrosomesVolume,
+			final double[] fLabelsOffset,
+			final double[] labelsResolution) {
+
+		final PreSynapticSite b = ((PostSynapticSite)a).getPartner();
+		final RealPoint posA = a.getPosition();
+		final RealPoint posB = b.getPosition();
+
+		fillMicrotubule(centrosomesVolume, posA, posB, 25, fLabelsOffset, labelsResolution, 36);
 
 		System.out.println(String.format(
 				"%s -> %s: (%f, %f, %f) -> (%f, %f, %f)",
@@ -342,6 +403,38 @@ public class Centrosomes {
 		reverse(labelsResolution);
 		n5.setAttribute("/volumes/labels/centrosomes", "offset", fLabelsOffset);
 		n5.setAttribute("/volumes/labels/centrosomes", "resolution", labelsResolution);
+
+
+		/* create microtubule in + out mask in GT */
+		final int[] blockSize = n5.getDatasetAttributes("/volumes/labels/gt").getBlockSize();
+		reverse(blockSize);
+		final CellImg<UnsignedLongType, ?> gtCopy = new CellImgFactory<>(new UnsignedLongType(), blockSize).create(labelsSource);
+		final CachedCellImg<UnsignedLongType, ?> gt = N5Utils.open(n5, "/volumes/labels/gt");
+		final CellCursor<UnsignedLongType, ?> ca = gt.cursor();
+		final CellCursor<UnsignedLongType, ?> cb = gtCopy.cursor();
+		while (cb.hasNext())
+			cb.next().set(ca.next());
+
+		annotationsCollection.forEach(
+				a -> {
+					if (a instanceof PostSynapticSite && a.getComment().equalsIgnoreCase("c"))
+						fillMicrotubule(a, gtCopy, fLabelsOffset, labelsResolution);
+				});
+		annotationsCollection.forEach(
+				a -> {
+					if (a instanceof PostSynapticSite && a.getComment().equalsIgnoreCase("b"))
+						fillMicrotubule(a, gtCopy, fLabelsOffset, labelsResolution);
+				});
+		annotationsCollection.forEach(
+				a -> {
+					if (a instanceof PostSynapticSite && a.getComment().equalsIgnoreCase("a"))
+						fillMicrotubule(a, gtCopy, fLabelsOffset, labelsResolution);
+				});
+
+		N5Utils.save(gtCopy, n5, "/volumes/labels/gt", new int[] {64, 64, 64}, new GzipCompression());
+		n5.setAttribute("/volumes/labels/gt", "offset", fLabelsOffset);
+		n5.setAttribute("/volumes/labels/gt", "resolution", labelsResolution);
+
 
 		hdf5Writer.close();
 
