@@ -57,6 +57,11 @@
 			<artifactId>bigcat</artifactId>
 			<version>0.0.3-beta-1</version>
 		</dependency>
+		<dependency>
+			<groupId>org.janelia.saalfeldlab</groupId>
+			<artifactId>n5-ij</artifactId>
+			<version>3.0.0</version>
+		</dependency>
 	</dependencies>
 
 	<developers>
